@@ -14,6 +14,7 @@ class CpuSensor:
         self._custom_temp_path = hwmon_temp_path
         self._temp_path: Optional[str] = None
         self._power_path: Optional[str] = None
+        self._power_type: str = "none"  # "rapl", "hwmon_energy", "hwmon_power"
         self._prev_energy_uj: Optional[int] = None
         self._prev_energy_time: Optional[float] = None
         self._prev_stat: Optional[Tuple[int, int]] = None  # (idle, total)
@@ -26,7 +27,6 @@ class CpuSensor:
             self._temp_path = self._custom_temp_path
             return
 
-        # Prioritize known CPU thermal drivers: coretemp, k10temp, zenpower, amd_energy
         hwmon_dirs = sorted(glob.glob("/sys/class/hwmon/hwmon*"))
         best_temp = None
 
@@ -40,8 +40,7 @@ class CpuSensor:
                 except Exception:
                     pass
 
-            if driver_name in ("k10temp", "zenpower", "coretemp"):
-                # Find package temp or highest priority temp
+            if driver_name in ("k10temp", "zenpower", "coretemp", "cpu_thermal"):
                 inputs = sorted(glob.glob(os.path.join(d, "temp*_input")))
                 for inp in inputs:
                     label_file = inp.replace("_input", "_label")
@@ -60,13 +59,11 @@ class CpuSensor:
                     best_temp = inputs[0]
                     break
 
-            # Fallback candidate
             if not best_temp:
                 inputs = glob.glob(os.path.join(d, "temp*_input"))
                 if inputs:
                     best_temp = inputs[0]
 
-            # Check for fan inputs
             if not self._fan_path:
                 fan_inputs = glob.glob(os.path.join(d, "fan*_input"))
                 if fan_inputs:
@@ -74,17 +71,35 @@ class CpuSensor:
 
         self._temp_path = best_temp
 
-        # Power cap / RAPL energy
-        rapl_energy = "/sys/class/powercap/intel-rapl/intel-rapl:0/energy_uj"
-        if os.path.exists(rapl_energy):
-            self._power_path = rapl_energy
-        else:
-            # Check hwmon power inputs
-            for d in hwmon_dirs:
-                p_in = os.path.join(d, "power1_average")
-                if os.path.exists(p_in):
-                    self._power_path = p_in
-                    break
+        # Discover power paths
+        # 1. Intel RAPL
+        rapl_paths = [
+            "/sys/class/powercap/intel-rapl/intel-rapl:0/energy_uj",
+            "/sys/devices/virtual/powercap/intel-rapl/intel-rapl:0/energy_uj",
+        ]
+        for rp in rapl_paths:
+            if os.path.exists(rp):
+                self._power_path = rp
+                self._power_type = "rapl"
+                return
+
+        # 2. AMD energy or hwmon energy/power (e.g. zenpower, amd_energy)
+        for d in hwmon_dirs:
+            # Direct power in microWatts
+            for p_name in ("power1_average", "power1_input", "power2_average", "power2_input"):
+                p_file = os.path.join(d, p_name)
+                if os.path.exists(p_file):
+                    self._power_path = p_file
+                    self._power_type = "hwmon_power"
+                    return
+
+            # Accumulated energy in microJoules
+            for e_name in ("energy1_input", "energy2_input"):
+                e_file = os.path.join(d, e_name)
+                if os.path.exists(e_file):
+                    self._power_path = e_file
+                    self._power_type = "hwmon_energy"
+                    return
 
     def get_temperature(self) -> float:
         if not self._temp_path or not os.path.exists(self._temp_path):
@@ -94,7 +109,6 @@ class CpuSensor:
             try:
                 with open(self._temp_path, "r") as f:
                     val = float(f.read().strip())
-                    # hwmon returns millidegrees C
                     return val / 1000.0 if val > 200 else val
             except Exception:
                 pass
@@ -111,6 +125,17 @@ class CpuSensor:
 
             if self._prev_stat is None:
                 self._prev_stat = (idle, total)
+                # Quick 50ms sample for one-shot CLI commands
+                time.sleep(0.05)
+                with open("/proc/stat", "r") as f:
+                    second_line = f.readline()
+                fields2 = [int(x) for x in second_line.split()[1:]]
+                idle2 = fields2[3] + fields2[4]
+                total2 = sum(fields2)
+                d_idle = idle2 - idle
+                d_total = total2 - total
+                if d_total > 0:
+                    return max(0.0, min(100.0, 100.0 * (1.0 - (d_idle / d_total))))
                 return 0.0
 
             prev_idle, prev_total = self._prev_stat
@@ -153,6 +178,9 @@ class CpuSensor:
     def get_power_w(self) -> float:
         """Calculates CPU power in Watts from RAPL or hwmon."""
         if not self._power_path or not os.path.exists(self._power_path):
+            self._discover_paths()
+
+        if not self._power_path or not os.path.exists(self._power_path):
             return 0.0
 
         now = time.time()
@@ -160,7 +188,12 @@ class CpuSensor:
             with open(self._power_path, "r") as f:
                 raw_val = int(f.read().strip())
 
-            if "energy_uj" in self._power_path:
+            # Direct power sensors (e.g. zenpower power1_average / power1_input in uW)
+            if self._power_type == "hwmon_power":
+                return raw_val / 1_000_000.0
+
+            # Cumulative energy sensors (Intel RAPL energy_uj or AMD energy1_input)
+            if self._power_type in ("rapl", "hwmon_energy"):
                 if self._prev_energy_uj is not None and self._prev_energy_time is not None:
                     delta_energy_uj = raw_val - self._prev_energy_uj
                     delta_t = now - self._prev_energy_time
@@ -171,12 +204,22 @@ class CpuSensor:
                         # 1 uJ / 1s = 1e-6 W
                         return (delta_energy_uj / 1_000_000.0) / delta_t
                 else:
+                    # Initial call: do a quick 80ms delta measurement for CLI commands
                     self._prev_energy_uj = raw_val
                     self._prev_energy_time = now
-                    return 0.0
-            else:
-                # power1_average in uW
-                return raw_val / 1_000_000.0
+                    time.sleep(0.08)
+                    now2 = time.time()
+                    with open(self._power_path, "r") as f:
+                        raw_val2 = int(f.read().strip())
+                    delta_t = now2 - now
+                    delta_e = raw_val2 - raw_val
+                    if delta_t > 0 and delta_e >= 0:
+                        self._prev_energy_uj = raw_val2
+                        self._prev_energy_time = now2
+                        return (delta_e / 1_000_000.0) / delta_t
+        except PermissionError:
+            # Linux RAPL energy_uj has 0400 permissions (root required)
+            pass
         except Exception:
             pass
         return 0.0
