@@ -1,0 +1,11 @@
+# udev rules for Ocypus and Hongtai Digital Display Controllers
+# Grants read/write permissions to hidraw and serial devices
+
+# Ocypus Digital (Standard) & Hongtai OEM Family
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="5131", MODE="0666", TAG+="uaccess"
+
+# Ocypus Digital (YCC Custom)
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1a2c", ATTRS{idProduct}=="434d", MODE="0666", TAG+="uaccess"
+
+# Ocypus Display (LCD Serial / ACM)
+SUBSYSTEM=="tty", ATTRS{idVendor}=="33c3", ATTRS{idProduct}=="7789", MODE="0666", TAG+="uaccess"

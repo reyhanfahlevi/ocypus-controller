@@ -1,0 +1,21 @@
+[Unit]
+Description=Ocypus Digital Display Controller Daemon for Proxmox 9
+Documentation=https://github.com/ocypus-rea
+After=network.target sys-subsystem-net-devices.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/bin/python3 -m ocypus.cli daemon
+Restart=always
+RestartSec=5s
+StandardOutput=journal
+StandardError=journal
+
+# Sandboxing & security hardening
+ProtectSystem=full
+ProtectHome=true
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

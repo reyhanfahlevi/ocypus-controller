@@ -1,0 +1,8 @@
+{
+  "temp_unit": "celsius",
+  "display_mode": "temp",
+  "cycle_interval": 5,
+  "refresh_interval": 1.0,
+  "show_gpu": false,
+  "custom_temp_path": null
+}
