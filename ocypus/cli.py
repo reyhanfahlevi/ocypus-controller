@@ -110,10 +110,13 @@ def cmd_run(args):
     cfg = Config.load(args.config)
 
     # CLI flag overrides
-    if args.temp_unit:
-        cfg.temp_unit = args.temp_unit
-    if args.display_mode:
-        cfg.display_mode_str = args.display_mode
+    temp_unit = getattr(args, "temp_unit", None)
+    if temp_unit:
+        cfg.temp_unit = temp_unit
+
+    display_mode = getattr(args, "display_mode", None)
+    if display_mode:
+        cfg.display_mode_str = display_mode
 
     daemon = OcypusDaemon(cfg)
     daemon.start()
@@ -141,7 +144,9 @@ def main():
     p_run.add_argument("--display-mode", choices=["temp", "util", "cycle"], help="Display mode")
 
     # daemon
-    subparsers.add_parser("daemon", help="Run controller in daemon mode")
+    p_daemon = subparsers.add_parser("daemon", help="Run controller in daemon mode")
+    p_daemon.add_argument("--temp-unit", choices=["celsius", "fahrenheit"], help="Temperature unit")
+    p_daemon.add_argument("--display-mode", choices=["temp", "util", "cycle"], help="Display mode")
 
     args = parser.parse_args()
 
