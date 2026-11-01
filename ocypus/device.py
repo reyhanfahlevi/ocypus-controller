@@ -61,12 +61,14 @@ class HidDevice:
         pid: int,
         name: str,
         usage_page: Optional[int] = None,
+        interface: Optional[int] = None,
     ):
         self.path = path
         self.vid = vid
         self.pid = pid
         self.name = name
         self.usage_page = usage_page
+        self.interface = interface
         self._fd: Optional[int] = None
         self._hid_handle = None
 
@@ -74,7 +76,19 @@ class HidDevice:
         if self._fd is not None or self._hid_handle is not None:
             return
 
-        # Attempt 1: native /dev/hidraw
+        # Attempt 1: hidapi (preferred if path is USB bus id like "1-7.2:1.1")
+        if not self.path.startswith("/dev/"):
+            try:
+                import hid
+                self._hid_handle = hid.device()
+                path_bytes = self.path.encode("utf-8") if isinstance(self.path, str) else self.path
+                self._hid_handle.open_path(path_bytes)
+                logger.info("Opened %s via hidapi (%s)", self.name, self.path)
+                return
+            except Exception as e:
+                logger.debug("Failed to open via hidapi: %s", e)
+
+        # Attempt 2: native /dev/hidraw
         if os.path.exists(self.path):
             try:
                 self._fd = os.open(self.path, os.O_RDWR | os.O_NONBLOCK)
@@ -93,23 +107,48 @@ class HidDevice:
             except Exception as e:
                 logger.debug("Failed to open via os.open: %s", e)
 
-        # Attempt 2: hidapi
+        # Attempt 3: hidapi fallback for /dev/ paths
         try:
             import hid
             self._hid_handle = hid.device()
-            self._hid_handle.open_path(self.path.encode("utf-8"))
-            logger.info("Opened %s via hidapi (%s)", self.name, self.path)
+            path_bytes = self.path.encode("utf-8") if isinstance(self.path, str) else self.path
+            self._hid_handle.open_path(path_bytes)
+            logger.info("Opened %s via hidapi fallback (%s)", self.name, self.path)
             return
         except Exception as e:
-            logger.debug("Failed to open via hidapi: %s", e)
+            logger.debug("Failed to open via hidapi fallback: %s", e)
 
         raise RuntimeError(f"Could not open device at {self.path}")
 
     def write(self, data: bytes) -> int:
-        if self._fd is not None:
-            return os.write(self._fd, data)
-        elif self._hid_handle is not None:
+        if self._hid_handle is not None:
             return self._hid_handle.write(data)
+        elif self._fd is not None:
+            try:
+                return os.write(self._fd, data)
+            except BrokenPipeError:
+                # If native hidraw write fails with BrokenPipe, switch dynamically to hidapi if available
+                try:
+                    import hid
+                    logger.info("Native hidraw write failed with BrokenPipe; switching to hidapi for %s", self.name)
+                    os.close(self._fd)
+                    self._fd = None
+                    self._hid_handle = hid.device()
+                    target_path = None
+                    for d in hid.enumerate(self.vid, self.pid):
+                        if self.interface is not None:
+                            if d.get("interface_number") == self.interface:
+                                target_path = d["path"]
+                                break
+                        else:
+                            target_path = d["path"]
+                            break
+                    if target_path:
+                        self._hid_handle.open_path(target_path)
+                        return self._hid_handle.write(data)
+                except Exception as ex:
+                    logger.debug("Failed to switch to hidapi: %s", ex)
+                raise
         else:
             raise RuntimeError("Device is not open")
 
@@ -132,12 +171,50 @@ class HidDevice:
 def find_ocypus_devices() -> List[HidDevice]:
     """
     Scans system for connected Ocypus & Hongtai digital display devices.
-    Matches Vendor ID, Product ID, and Usage Page (if specified for composite devices).
+    Matches Vendor ID, Product ID, Usage Page, and USB interface number.
     Returns list of discovered HidDevice instances.
     """
     found = []
 
-    # 1. Check native Linux /sys/class/hidraw
+    # 1. Try python-hidapi first if installed (handles USB detachment for composite devices)
+    try:
+        import hid
+        for d in hid.enumerate():
+            vid = d.get("vendor_id", 0)
+            pid = d.get("product_id", 0)
+            dev_up = d.get("usage_page", 0)
+            ifnum = d.get("interface_number", -1)
+
+            for dev_info in SUPPORTED_DEVICES:
+                if dev_info["vid"] == vid and dev_info["pid"] == pid:
+                    expected_up = dev_info.get("usage_page")
+                    if expected_up is not None and dev_up != 0 and dev_up != expected_up:
+                        continue
+
+                    expected_if = dev_info.get("interface")
+                    if expected_if is not None and ifnum != -1 and ifnum != expected_if:
+                        continue
+
+                    path_val = d["path"]
+                    path_str = path_val.decode("utf-8") if isinstance(path_val, bytes) else str(path_val)
+                    found.append(
+                        HidDevice(
+                            path=path_str,
+                            vid=vid,
+                            pid=pid,
+                            name=dev_info["name"],
+                            usage_page=dev_up or expected_up,
+                            interface=ifnum if ifnum != -1 else expected_if,
+                        )
+                    )
+        if found:
+            return found
+    except ImportError:
+        pass
+    except Exception as e:
+        logger.debug("hidapi enumeration failed: %s", e)
+
+    # 2. Check native Linux /sys/class/hidraw (zero dependencies fallback)
     hidraw_paths = sorted(glob.glob("/sys/class/hidraw/hidraw*"))
     for hpath in hidraw_paths:
         dev_name = os.path.basename(hpath)
@@ -208,37 +285,5 @@ def find_ocypus_devices() -> List[HidDevice]:
                                 )
         except Exception as e:
             logger.debug("Error inspecting %s: %s", uevent_file, e)
-
-    if found:
-        return found
-
-    # 2. Fallback: try python-hidapi if installed
-    try:
-        import hid
-        for d in hid.enumerate():
-            vid = d.get("vendor_id", 0)
-            pid = d.get("product_id", 0)
-            dev_up = d.get("usage_page", 0)
-
-            for dev_info in SUPPORTED_DEVICES:
-                if dev_info["vid"] == vid and dev_info["pid"] == pid:
-                    expected_up = dev_info.get("usage_page")
-                    if expected_up is not None and dev_up != expected_up:
-                        continue
-
-                    path_str = d["path"].decode("utf-8") if isinstance(d["path"], bytes) else d["path"]
-                    found.append(
-                        HidDevice(
-                            path=path_str,
-                            vid=vid,
-                            pid=pid,
-                            name=dev_info["name"],
-                            usage_page=dev_up or expected_up,
-                        )
-                    )
-    except ImportError:
-        pass
-    except Exception as e:
-        logger.debug("hidapi enumeration failed: %s", e)
 
     return found

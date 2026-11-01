@@ -9,7 +9,7 @@ from typing import Optional, Dict, Any, List
 # Standard USB HID Vendor and Product IDs
 SUPPORTED_DEVICES = [
     {"vid": 0x5131, "pid": 0x2016, "name": "Ocypus Digital Display (Standard)"},
-    {"vid": 0x1A2C, "pid": 0x434D, "usage_page": 0xFF01, "name": "Ocypus Digital Display (YCC Custom)"},
+    {"vid": 0x1A2C, "pid": 0x434D, "usage_page": 0xFF01, "interface": 1, "name": "Ocypus Digital Display (YCC Custom)"},
     # Common Hongtai OEM family devices sharing the identical protocol
     {"vid": 0x5131, "pid": 0x2007, "name": "Hongtai Public Digital Display"},
     {"vid": 0x5131, "pid": 0x2008, "name": "YiCheng Digital Display"},

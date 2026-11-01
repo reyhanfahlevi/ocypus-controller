@@ -15,10 +15,16 @@ echo "[+] Installing Ocypus Linux Controller..."
 INSTALL_DIR="/opt/ocypus-controller"
 CONFIG_DIR="/etc/ocypus"
 
-# Ensure python3 is available
+# Ensure python3 and python3-hid are available
 if ! command -v python3 &>/dev/null; then
   echo "[-] python3 is required. Installing via apt..."
   apt-get update && apt-get install -y python3
+fi
+
+# python3-hid (libhidapi) provides robust USB detachment for composite coolers like YCC 1A2C:434D
+if ! python3 -c "import hid" &>/dev/null; then
+  echo "[+] Installing python3-hid for USB HID communication..."
+  apt-get update -qq && apt-get install -y -qq python3-hid || true
 fi
 
 # 1. Create installation directories
