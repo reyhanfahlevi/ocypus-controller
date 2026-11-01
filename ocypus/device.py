@@ -6,18 +6,67 @@ Supports both native Linux /dev/hidraw (zero dependencies) and python-hidapi.
 import os
 import glob
 import logging
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 from .protocol import SUPPORTED_DEVICES
 
 logger = logging.getLogger("ocypus.device")
 
 
+def parse_report_descriptor_usage_pages(data: bytes) -> Tuple[List[int], List[int]]:
+    """
+    Parses a binary HID report descriptor to extract (app_usage_pages, all_usage_pages).
+    app_usage_pages: Usage Pages belonging to Application collections (Collection 0x01).
+    all_usage_pages: All Usage Pages encountered in the descriptor.
+    """
+    i = 0
+    usage_page = None
+    app_usage_pages = []
+    all_usage_pages = []
+
+    while i < len(data):
+        b = data[i]
+        if b == 0xFE:  # Long item
+            if i + 2 >= len(data):
+                break
+            dlen = data[i + 1]
+            i += 3 + dlen
+            continue
+
+        b_size = b & 0x03
+        if b_size == 3:
+            b_size = 4
+        b_type = (b >> 2) & 0x03
+        b_tag = (b >> 4) & 0x0F
+
+        item_data = data[i + 1 : i + 1 + b_size]
+        val = int.from_bytes(item_data, byteorder="little") if item_data else 0
+
+        if b_type == 1 and b_tag == 0:  # Global: Usage Page
+            usage_page = val
+            all_usage_pages.append(val)
+        elif b_type == 0 and b_tag == 10:  # Main: Collection
+            if val == 1 and usage_page is not None:  # Application Collection
+                app_usage_pages.append(usage_page)
+
+        i += 1 + b_size
+
+    return app_usage_pages, all_usage_pages
+
+
 class HidDevice:
-    def __init__(self, path: str, vid: int, pid: int, name: str):
+    def __init__(
+        self,
+        path: str,
+        vid: int,
+        pid: int,
+        name: str,
+        usage_page: Optional[int] = None,
+    ):
         self.path = path
         self.vid = vid
         self.pid = pid
         self.name = name
+        self.usage_page = usage_page
         self._fd: Optional[int] = None
         self._hid_handle = None
 
@@ -29,7 +78,12 @@ class HidDevice:
         if os.path.exists(self.path):
             try:
                 self._fd = os.open(self.path, os.O_RDWR | os.O_NONBLOCK)
-                logger.info("Opened %s via native /dev/hidraw (%s)", self.name, self.path)
+                logger.info(
+                    "Opened %s via native /dev/hidraw (%s, usage_page=0x%s)",
+                    self.name,
+                    self.path,
+                    f"{self.usage_page:04X}" if self.usage_page else "N/A",
+                )
                 return
             except PermissionError:
                 logger.error(
@@ -78,6 +132,7 @@ class HidDevice:
 def find_ocypus_devices() -> List[HidDevice]:
     """
     Scans system for connected Ocypus & Hongtai digital display devices.
+    Matches Vendor ID, Product ID, and Usage Page (if specified for composite devices).
     Returns list of discovered HidDevice instances.
     """
     found = []
@@ -88,6 +143,7 @@ def find_ocypus_devices() -> List[HidDevice]:
         dev_name = os.path.basename(hpath)
         dev_file = os.path.join("/dev", dev_name)
         uevent_file = os.path.join(hpath, "device", "uevent")
+        rd_file = os.path.join(hpath, "device", "report_descriptor")
 
         if not os.path.exists(uevent_file):
             continue
@@ -103,14 +159,51 @@ def find_ocypus_devices() -> List[HidDevice]:
                     if len(parts) >= 3:
                         vid = int(parts[1], 16)
                         pid = int(parts[2], 16)
+
+                        # Parse usage pages from report_descriptor if present
+                        app_ups: List[int] = []
+                        all_ups: List[int] = []
+                        raw_rd = b""
+                        if os.path.exists(rd_file):
+                            try:
+                                with open(rd_file, "rb") as rf:
+                                    raw_rd = rf.read()
+                                app_ups, all_ups = parse_report_descriptor_usage_pages(raw_rd)
+                            except Exception as e:
+                                logger.debug("Could not read report descriptor %s: %s", rd_file, e)
+
                         for dev_info in SUPPORTED_DEVICES:
                             if dev_info["vid"] == vid and dev_info["pid"] == pid:
+                                expected_up = dev_info.get("usage_page")
+
+                                # If an explicit usage page is required (e.g. 0xFF01 for YCC custom composite device)
+                                if expected_up is not None:
+                                    # Check report descriptor parsing
+                                    up_match = (
+                                        expected_up in app_ups
+                                        or expected_up in all_ups
+                                        # Fast fallback pattern: 0x06 (Usage Page 16-bit), little-endian expected_up
+                                        or (expected_up.to_bytes(2, "little") in raw_rd)
+                                    )
+                                    if not up_match:
+                                        logger.debug(
+                                            "Skipping %s (%s): expected usage_page 0x%04X, got app=%s all=%s",
+                                            dev_file,
+                                            dev_info["name"],
+                                            expected_up,
+                                            [f"0x{u:04X}" for u in app_ups],
+                                            [f"0x{u:04X}" for u in all_ups],
+                                        )
+                                        continue
+
+                                matched_up = expected_up or (app_ups[0] if app_ups else (all_ups[0] if all_ups else None))
                                 found.append(
                                     HidDevice(
                                         path=dev_file,
                                         vid=vid,
                                         pid=pid,
                                         name=dev_info["name"],
+                                        usage_page=matched_up,
                                     )
                                 )
         except Exception as e:
@@ -125,8 +218,14 @@ def find_ocypus_devices() -> List[HidDevice]:
         for d in hid.enumerate():
             vid = d.get("vendor_id", 0)
             pid = d.get("product_id", 0)
+            dev_up = d.get("usage_page", 0)
+
             for dev_info in SUPPORTED_DEVICES:
                 if dev_info["vid"] == vid and dev_info["pid"] == pid:
+                    expected_up = dev_info.get("usage_page")
+                    if expected_up is not None and dev_up != expected_up:
+                        continue
+
                     path_str = d["path"].decode("utf-8") if isinstance(d["path"], bytes) else d["path"]
                     found.append(
                         HidDevice(
@@ -134,6 +233,7 @@ def find_ocypus_devices() -> List[HidDevice]:
                             vid=vid,
                             pid=pid,
                             name=dev_info["name"],
+                            usage_page=dev_up or expected_up,
                         )
                     )
     except ImportError:

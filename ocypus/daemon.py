@@ -25,6 +25,8 @@ class OcypusDaemon:
         self.mem_sensor = MemorySensor()
         self.gpu_sensor = GpuSensor()
         self.active_device: Optional[HidDevice] = None
+        self.consecutive_errors = 0
+        self.max_retries = 5
 
     def start(self):
         self.running = True
@@ -51,16 +53,34 @@ class OcypusDaemon:
                     self.active_device = devices[0]
                     self.active_device.open()
                     logger.info("Connected to %s (%s)", self.active_device.name, self.active_device.path)
+                    self.consecutive_errors = 0
 
                 self._tick()
+                self.consecutive_errors = 0
                 time.sleep(self.config.refresh_interval)
 
             except (BrokenPipeError, OSError) as e:
-                logger.error("Device communication error: %s. Reconnecting...", e)
-                if self.active_device:
-                    self.active_device.close()
-                    self.active_device = None
-                time.sleep(2.0)
+                self.consecutive_errors += 1
+                if self.consecutive_errors >= self.max_retries:
+                    logger.error(
+                        "Device communication error (%d/%d): %s. Reconnecting...",
+                        self.consecutive_errors,
+                        self.max_retries,
+                        e,
+                    )
+                    if self.active_device:
+                        self.active_device.close()
+                        self.active_device = None
+                    self.consecutive_errors = 0
+                    time.sleep(2.0)
+                else:
+                    logger.warning(
+                        "Device communication error (%d/%d): %s. Retrying...",
+                        self.consecutive_errors,
+                        self.max_retries,
+                        e,
+                    )
+                    time.sleep(0.2)
             except Exception as e:
                 logger.exception("Unexpected error in daemon loop: %s", e)
                 time.sleep(1.0)
@@ -87,6 +107,7 @@ class OcypusDaemon:
             packet = OcypusPacketBuilder.build_ycc_packet(
                 temp=gpu_temp if self.config.show_gpu else cpu_temp,
                 show_gpu=self.config.show_gpu,
+                use_fahrenheit=self.config.use_fahrenheit,
             )
         else:
             # Standard 64-byte Hongtai/Ocypus packet

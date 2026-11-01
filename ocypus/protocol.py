@@ -214,11 +214,14 @@ class OcypusPacketBuilder:
     def build_ycc_packet(
         temp: float = 0.0,
         show_gpu: bool = False,
+        use_fahrenheit: bool = False,
     ) -> bytes:
         """
         Builds the report for Ocypus YCC Custom device (0x1A2C:0x434D).
         Packet format: [0x07, 0xFF, 0xFF, hundreds, tens, ones]
         """
+        if use_fahrenheit:
+            temp = (9.0 / 5.0) * temp + 32.0
         digits = split_bcd_digits(int(round(temp)))
         data = bytearray([0x07, 0xFF, 0xFF])
         data.extend(digits)

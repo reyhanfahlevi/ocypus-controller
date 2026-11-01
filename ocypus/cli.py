@@ -28,9 +28,11 @@ def cmd_detect(args):
     devices = find_ocypus_devices()
     if devices:
         for idx, dev in enumerate(devices, 1):
+            up_str = f"0x{dev.usage_page:04X}" if dev.usage_page else "N/A"
             print(f"[{idx}] {dev.name}")
-            print(f"    Path:    {dev.path}")
-            print(f"    VID:PID: 0x{dev.vid:04X}:0x{dev.pid:04X}")
+            print(f"    Path:       {dev.path}")
+            print(f"    VID:PID:    0x{dev.vid:04X}:0x{dev.pid:04X}")
+            print(f"    Usage Page: {up_str}")
     else:
         print("No supported USB HID display devices found.")
         print("Note: Ensure the USB header is plugged in, and check with 'lsusb'.")
@@ -83,24 +85,33 @@ def cmd_status(args):
     print(f"  RAM: {mem_u:.1f}%")
     print(f"  GPU: {gt:.1f}°C, {gu:.1f}%, {gp:.1f}W")
 
-    packet = OcypusPacketBuilder.build_standard_packet(
-        cpu_temp=cpu_t,
-        cpu_util=cpu_u,
-        cpu_freq_mhz=cpu_f,
-        cpu_power_w=cpu_p,
-        gpu_temp=gt,
-        gpu_util=gu,
-        gpu_freq_mhz=gf,
-        gpu_power_w=gp,
-        cpu_fan_rpm=fan_rpm,
-        ram_util=mem_u,
-        ram_temp=mem_t,
-        ram_freq_mhz=mem_f,
-        display_mode=cfg.display_mode_code,
-        cycle_interval=cfg.cycle_interval,
-        use_fahrenheit=cfg.use_fahrenheit,
-    )
-    print("\nGenerated 64-byte HID Packet:")
+    if dev.vid == 0x1A2C and dev.pid == 0x434D:
+        packet = OcypusPacketBuilder.build_ycc_packet(
+            temp=gt if cfg.show_gpu else cpu_t,
+            show_gpu=cfg.show_gpu,
+            use_fahrenheit=cfg.use_fahrenheit,
+        )
+        print("\nGenerated 6-byte YCC HID Packet:")
+    else:
+        packet = OcypusPacketBuilder.build_standard_packet(
+            cpu_temp=cpu_t,
+            cpu_util=cpu_u,
+            cpu_freq_mhz=cpu_f,
+            cpu_power_w=cpu_p,
+            gpu_temp=gt,
+            gpu_util=gu,
+            gpu_freq_mhz=gf,
+            gpu_power_w=gp,
+            cpu_fan_rpm=fan_rpm,
+            ram_util=mem_u,
+            ram_temp=mem_t,
+            ram_freq_mhz=mem_f,
+            display_mode=cfg.display_mode_code,
+            cycle_interval=cfg.cycle_interval,
+            use_fahrenheit=cfg.use_fahrenheit,
+            show_gpu=cfg.show_gpu,
+        )
+        print("\nGenerated 64-byte HID Packet:")
     hex_dump = " ".join(f"{b:02X}" for b in packet)
     print(f"  {hex_dump}")
 
