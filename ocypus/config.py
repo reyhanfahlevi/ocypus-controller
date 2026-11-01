@@ -10,6 +10,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "temp_unit": "celsius",          # "celsius" or "fahrenheit"
     "display_mode": "temp",          # "temp", "util", "cycle", "ram", "power", "watt"
     "cycle_interval": 5,             # seconds between cycles
+    "cycle_metrics": ["temp", "util", "watt"], # metrics to cycle when in cycle mode
     "refresh_interval": 1.0,         # update frequency in seconds (default 1s)
     "show_gpu": False,               # show GPU instead of CPU
     "custom_temp_path": None,        # optional path to custom hwmon temp file
@@ -28,6 +29,7 @@ class Config:
         self.temp_unit = data.get("temp_unit", DEFAULT_CONFIG["temp_unit"]).lower()
         self.display_mode_str = data.get("display_mode", DEFAULT_CONFIG["display_mode"]).lower()
         self.cycle_interval = int(data.get("cycle_interval", DEFAULT_CONFIG["cycle_interval"]))
+        self.cycle_metrics = [str(m).lower() for m in data.get("cycle_metrics", DEFAULT_CONFIG["cycle_metrics"])]
         self.refresh_interval = float(data.get("refresh_interval", DEFAULT_CONFIG["refresh_interval"]))
         self.show_gpu = bool(data.get("show_gpu", DEFAULT_CONFIG["show_gpu"]))
         self.custom_temp_path = data.get("custom_temp_path", None)

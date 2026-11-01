@@ -1,7 +1,8 @@
 {
   "temp_unit": "celsius",
-  "display_mode": "temp",
+  "display_mode": "cycle",
   "cycle_interval": 5,
+  "cycle_metrics": ["temp", "util", "watt"],
   "refresh_interval": 1.0,
   "show_gpu": false,
   "custom_temp_path": null,

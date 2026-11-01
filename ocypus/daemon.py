@@ -121,22 +121,34 @@ class OcypusDaemon:
             metric_name = "RAM"
             unit_str = "%"
         elif self.config.is_cycle_mode:
-            cycle_phase = int(time.time() // max(1, self.config.cycle_interval)) % 3
-            if cycle_phase == 0:
+            metrics = self.config.cycle_metrics or ["temp", "util", "watt"]
+            cycle_phase = int(time.time() // max(1, self.config.cycle_interval)) % len(metrics)
+            current_metric = metrics[cycle_phase].lower()
+            if "temp" in current_metric:
                 target_val = gpu_temp if self.config.show_gpu else cpu_temp
                 is_temp = True
                 metric_name = "Temp"
                 unit_str = "°F" if self.config.use_fahrenheit else "°C"
-            elif cycle_phase == 1:
+            elif any(k in current_metric for k in ("util", "load", "percent")):
                 target_val = gpu_util if self.config.show_gpu else cpu_util
                 is_temp = False
                 metric_name = "Util"
                 unit_str = "%"
-            else:
+            elif any(k in current_metric for k in ("watt", "power")):
                 target_val = gpu_power if self.config.show_gpu else cpu_power
                 is_temp = False
                 metric_name = "Power"
                 unit_str = "W"
+            elif "ram" in current_metric or "mem" in current_metric:
+                target_val = mem_util
+                is_temp = False
+                metric_name = "RAM"
+                unit_str = "%"
+            else:
+                target_val = gpu_temp if self.config.show_gpu else cpu_temp
+                is_temp = True
+                metric_name = "Temp"
+                unit_str = "°F" if self.config.use_fahrenheit else "°C"
         else:
             target_val = gpu_temp if self.config.show_gpu else cpu_temp
             is_temp = True
