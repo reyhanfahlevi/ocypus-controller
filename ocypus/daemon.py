@@ -101,13 +101,53 @@ class OcypusDaemon:
         # 3. Collect GPU metrics
         gpu_temp, gpu_util, gpu_freq, gpu_power = self.gpu_sensor.get_metrics()
 
-        # 4. Build and send packet
+        # 4. Determine metric to display on numerical displays
+        if self.config.is_power_mode:
+            target_val = gpu_power if self.config.show_gpu else cpu_power
+            is_temp = False
+            metric_name = "Power"
+            unit_str = "W"
+        elif self.config.is_util_mode:
+            target_val = gpu_util if self.config.show_gpu else cpu_util
+            is_temp = False
+            metric_name = "Util"
+            unit_str = "%"
+        elif self.config.is_ram_mode:
+            target_val = mem_util
+            is_temp = False
+            metric_name = "RAM"
+            unit_str = "%"
+        elif self.config.is_cycle_mode:
+            cycle_phase = int(time.time() // max(1, self.config.cycle_interval)) % 3
+            if cycle_phase == 0:
+                target_val = gpu_temp if self.config.show_gpu else cpu_temp
+                is_temp = True
+                metric_name = "Temp"
+                unit_str = "°F" if self.config.use_fahrenheit else "°C"
+            elif cycle_phase == 1:
+                target_val = gpu_util if self.config.show_gpu else cpu_util
+                is_temp = False
+                metric_name = "Util"
+                unit_str = "%"
+            else:
+                target_val = gpu_power if self.config.show_gpu else cpu_power
+                is_temp = False
+                metric_name = "Power"
+                unit_str = "W"
+        else:
+            target_val = gpu_temp if self.config.show_gpu else cpu_temp
+            is_temp = True
+            metric_name = "Temp"
+            unit_str = "°F" if self.config.use_fahrenheit else "°C"
+
+        # 5. Build and send packet
         if self.active_device.vid == 0x1A2C and self.active_device.pid == 0x434D:
             # YCC Custom variant
             packet = OcypusPacketBuilder.build_ycc_packet(
-                temp=gpu_temp if self.config.show_gpu else cpu_temp,
+                val=target_val,
                 show_gpu=self.config.show_gpu,
                 use_fahrenheit=self.config.use_fahrenheit,
+                is_temp=is_temp,
             )
         else:
             # Standard 64-byte Hongtai/Ocypus packet
@@ -133,11 +173,14 @@ class OcypusDaemon:
 
         self.active_device.write(packet)
         logger.debug(
-            "Update sent: CPU=%.1f°C (%.1f%%, %.0fMHz), GPU=%.1f°C, RAM=%.1f%%",
+            "Update sent: %s=%.1f%s (CPU=%.1f°C/%.1fW, GPU=%.1f°C/%.1fW, RAM=%.1f%%)",
+            metric_name,
+            target_val,
+            unit_str,
             cpu_temp,
-            cpu_util,
-            cpu_freq,
+            cpu_power,
             gpu_temp,
+            gpu_power,
             mem_util,
         )
 

@@ -86,12 +86,30 @@ def cmd_status(args):
     print(f"  GPU: {gt:.1f}°C, {gu:.1f}%, {gp:.1f}W")
 
     if dev.vid == 0x1A2C and dev.pid == 0x434D:
+        if cfg.is_power_mode:
+            target_val = gp if cfg.show_gpu else cpu_p
+            is_temp = False
+            mode_label = "Power (Watt)"
+        elif cfg.is_util_mode:
+            target_val = gu if cfg.show_gpu else cpu_u
+            is_temp = False
+            mode_label = "Utilization (%)"
+        elif cfg.is_ram_mode:
+            target_val = mem_u
+            is_temp = False
+            mode_label = "RAM (%)"
+        else:
+            target_val = gt if cfg.show_gpu else cpu_t
+            is_temp = True
+            mode_label = f"Temperature ({'°F' if cfg.use_fahrenheit else '°C'})"
+
         packet = OcypusPacketBuilder.build_ycc_packet(
-            temp=gt if cfg.show_gpu else cpu_t,
+            val=target_val,
             show_gpu=cfg.show_gpu,
             use_fahrenheit=cfg.use_fahrenheit,
+            is_temp=is_temp,
         )
-        print("\nGenerated 6-byte YCC HID Packet:")
+        print(f"\nGenerated 6-byte YCC HID Packet ({mode_label}: {target_val:.1f}):")
     else:
         packet = OcypusPacketBuilder.build_standard_packet(
             cpu_temp=cpu_t,
@@ -152,12 +170,20 @@ def main():
     # run
     p_run = subparsers.add_parser("run", help="Run controller in foreground")
     p_run.add_argument("--temp-unit", choices=["celsius", "fahrenheit"], help="Temperature unit")
-    p_run.add_argument("--display-mode", choices=["temp", "util", "cycle"], help="Display mode")
+    p_run.add_argument(
+        "--display-mode",
+        choices=["temp", "util", "cycle", "power", "watt", "ram"],
+        help="Display mode (temp, util, cycle, watt/power, ram)",
+    )
 
     # daemon
     p_daemon = subparsers.add_parser("daemon", help="Run controller in daemon mode")
     p_daemon.add_argument("--temp-unit", choices=["celsius", "fahrenheit"], help="Temperature unit")
-    p_daemon.add_argument("--display-mode", choices=["temp", "util", "cycle"], help="Display mode")
+    p_daemon.add_argument(
+        "--display-mode",
+        choices=["temp", "util", "cycle", "power", "watt", "ram"],
+        help="Display mode (temp, util, cycle, watt/power, ram)",
+    )
 
     args = parser.parse_args()
 

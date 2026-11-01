@@ -8,7 +8,7 @@ from typing import Dict, Any
 
 DEFAULT_CONFIG: Dict[str, Any] = {
     "temp_unit": "celsius",          # "celsius" or "fahrenheit"
-    "display_mode": "temp",          # "temp", "util", "cycle", or "ram"
+    "display_mode": "temp",          # "temp", "util", "cycle", "ram", "power", "watt"
     "cycle_interval": 5,             # seconds between cycles
     "refresh_interval": 1.0,         # update frequency in seconds (default 1s)
     "show_gpu": False,               # show GPU instead of CPU
@@ -36,12 +36,28 @@ class Config:
         return self.temp_unit.startswith("f")
 
     @property
+    def is_power_mode(self) -> bool:
+        return any(k in self.display_mode_str for k in ("power", "watt"))
+
+    @property
+    def is_util_mode(self) -> bool:
+        return any(k in self.display_mode_str for k in ("util", "load", "percent"))
+
+    @property
+    def is_ram_mode(self) -> bool:
+        return "ram" in self.display_mode_str or "mem" in self.display_mode_str
+
+    @property
+    def is_cycle_mode(self) -> bool:
+        return "cycle" in self.display_mode_str
+
+    @property
     def display_mode_code(self) -> int:
-        if "util" in self.display_mode_str:
+        if self.is_power_mode:
+            return 1  # Map to secondary metric mode on standard hardware
+        elif self.is_util_mode:
             return 1
-        elif "cycle" in self.display_mode_str:
-            return 2
-        elif "ram" in self.display_mode_str:
+        elif self.is_cycle_mode or self.is_ram_mode:
             return 2
         return 0  # temp
 
