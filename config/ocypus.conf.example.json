@@ -4,5 +4,6 @@
   "cycle_interval": 5,
   "refresh_interval": 1.0,
   "show_gpu": false,
-  "custom_temp_path": null
+  "custom_temp_path": null,
+  "custom_fan_path": null
 }

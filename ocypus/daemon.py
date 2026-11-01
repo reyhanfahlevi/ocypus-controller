@@ -21,7 +21,10 @@ class OcypusDaemon:
     def __init__(self, config: Config):
         self.config = config
         self.running = False
-        self.cpu_sensor = CpuSensor(hwmon_temp_path=config.custom_temp_path)
+        self.cpu_sensor = CpuSensor(
+            hwmon_temp_path=config.custom_temp_path,
+            hwmon_fan_path=config.custom_fan_path,
+        )
         self.mem_sensor = MemorySensor()
         self.gpu_sensor = GpuSensor()
         self.active_device: Optional[HidDevice] = None

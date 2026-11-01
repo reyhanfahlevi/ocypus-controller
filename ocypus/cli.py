@@ -45,6 +45,7 @@ def cmd_detect(args):
     print(f"CPU Freq:       {cpu.get_frequency_mhz():.1f} MHz")
     print(f"CPU Power Path: {cpu._power_path or 'Not found (hint: run as sudo, or load intel_rapl_msr / zenpower)'}")
     print(f"CPU Power:      {cpu.get_power_w():.1f} W")
+    print(f"CPU Fan Path:   {cpu._fan_path or 'Not found'}")
     print(f"CPU Fan RPM:    {cpu.get_fan_rpm()} RPM")
 
     mem = MemorySensor()

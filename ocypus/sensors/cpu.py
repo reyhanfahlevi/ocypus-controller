@@ -10,8 +10,13 @@ from typing import Optional, Tuple
 
 
 class CpuSensor:
-    def __init__(self, hwmon_temp_path: Optional[str] = None):
+    def __init__(
+        self,
+        hwmon_temp_path: Optional[str] = None,
+        hwmon_fan_path: Optional[str] = None,
+    ):
         self._custom_temp_path = hwmon_temp_path
+        self._custom_fan_path = hwmon_fan_path
         self._temp_path: Optional[str] = None
         self._power_path: Optional[str] = None
         self._power_type: str = "none"  # "rapl", "hwmon_energy", "hwmon_power"
@@ -23,13 +28,17 @@ class CpuSensor:
         self._discover_paths()
 
     def _discover_paths(self):
+        hwmon_dirs = sorted(glob.glob("/sys/class/hwmon/hwmon*"))
+        self._discover_temp_path(hwmon_dirs)
+        self._discover_fan_path(hwmon_dirs)
+        self._discover_power_path(hwmon_dirs)
+
+    def _discover_temp_path(self, hwmon_dirs):
         if self._custom_temp_path and os.path.exists(self._custom_temp_path):
             self._temp_path = self._custom_temp_path
             return
 
-        hwmon_dirs = sorted(glob.glob("/sys/class/hwmon/hwmon*"))
         best_temp = None
-
         for d in hwmon_dirs:
             name_file = os.path.join(d, "name")
             driver_name = ""
@@ -64,14 +73,52 @@ class CpuSensor:
                 if inputs:
                     best_temp = inputs[0]
 
-            if not self._fan_path:
-                fan_inputs = glob.glob(os.path.join(d, "fan*_input"))
-                if fan_inputs:
-                    self._fan_path = fan_inputs[0]
-
         self._temp_path = best_temp
 
-        # Discover power paths
+    def _discover_fan_path(self, hwmon_dirs):
+        if self._custom_fan_path and os.path.exists(self._custom_fan_path):
+            self._fan_path = self._custom_fan_path
+            return
+
+        candidate_fans = []
+        for d in hwmon_dirs:
+            for fan_file in sorted(glob.glob(os.path.join(d, "fan*_input"))):
+                label_file = fan_file.replace("_input", "_label")
+                label = ""
+                if os.path.exists(label_file):
+                    try:
+                        with open(label_file, "r") as f:
+                            label = f.read().strip().lower()
+                    except Exception:
+                        pass
+
+                rpm = 0
+                try:
+                    with open(fan_file, "r") as f:
+                        rpm = int(f.read().strip())
+                except Exception:
+                    pass
+
+                candidate_fans.append((fan_file, label, rpm))
+
+        # Prioritize:
+        # 1. Label containing "cpu" or "pump" or "cooler" or "aio" with rpm > 0
+        for fpath, label, rpm in candidate_fans:
+            if any(k in label for k in ("cpu", "pump", "aio", "cooler")) and rpm > 0:
+                self._fan_path = fpath
+                return
+
+        # 2. First fan with active RPM > 0 (e.g. AIO pump or CPU fan header)
+        for fpath, label, rpm in candidate_fans:
+            if rpm > 0:
+                self._fan_path = fpath
+                return
+
+        # 3. Any found fan input
+        if candidate_fans:
+            self._fan_path = candidate_fans[0][0]
+
+    def _discover_power_path(self, hwmon_dirs):
         # 1. Intel RAPL
         rapl_paths = [
             "/sys/class/powercap/intel-rapl/intel-rapl:0/energy_uj",

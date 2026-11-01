@@ -13,6 +13,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "refresh_interval": 1.0,         # update frequency in seconds (default 1s)
     "show_gpu": False,               # show GPU instead of CPU
     "custom_temp_path": None,        # optional path to custom hwmon temp file
+    "custom_fan_path": None,         # optional path to custom hwmon fan file
 }
 
 CONFIG_PATHS = [
@@ -30,6 +31,7 @@ class Config:
         self.refresh_interval = float(data.get("refresh_interval", DEFAULT_CONFIG["refresh_interval"]))
         self.show_gpu = bool(data.get("show_gpu", DEFAULT_CONFIG["show_gpu"]))
         self.custom_temp_path = data.get("custom_temp_path", None)
+        self.custom_fan_path = data.get("custom_fan_path", None)
 
     @property
     def use_fahrenheit(self) -> bool:
