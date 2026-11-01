@@ -36,7 +36,7 @@ The Windows application `Ocypus Digital Elite 2.0.6.exe` was analyzed to discove
 | Device Model | VID | PID | Interface / Notes |
 | :--- | :--- | :--- | :--- |
 | **Ocypus Digital (Standard)** | `0x5131` | `0x2016` | USB HID 64-byte report (0x01) |
-| **Ocypus Digital (YCC Custom)** | `0x1A2C` | `0x434D` | USB HID BCD report (Usage Page 0xFF01) |
+| **Ocypus Digital (YCC Custom)** | `0x1A2C` | `0x434D` | USB HID 64-byte padded BCD report (Usage Page 0xFF01, Interface 1) |
 | **Hongtai Public Edition** | `0x5131` | `0x2007` | Standard 64-byte HID |
 | **YiCheng / Alseye / RuiTuo / Cooling** | `0x5131` | `0x2008`..`0x200B`| Standard 64-byte HID |
 | **MSI / CoolMai / TT Segment** | `0x5131` | `0x200C`..`0x200E`| Standard 64-byte HID |
@@ -88,6 +88,20 @@ Data is transmitted every **1,000 ms** (1 second) as a 64-byte HID output report
 | **48** | `Display Mode` | `uint8` | `0`=CPU, `1`=GPU, `2`=RAM, `3`=Cycle |
 | **49..51**| `Decimals` | `uint8[3]`| Decimal fractions for CPU, GPU, and RAM |
 | **52..63**| `Padding` | `uint8[12]`| Zero padding (`0x00`) to 64 bytes total |
+
+### 3. YCC Custom HID Packet Structure (VID `0x1A2C`, PID `0x434D`)
+
+The China Resource Semico MCU uses Report ID `0x07` on Interface 1 (`Usage Page 0xFF01`) with a report count of 63 bytes (64 bytes total). 
+
+```
+Byte 0      : Report ID (0x07)
+Byte 1..2   : Header (0xFF, 0xFF)
+Byte 3      : Hundreds Digit (0..9 BCD)
+Byte 4      : Tens Digit (0..9 BCD)
+Byte 5      : Ones Digit (0..9 BCD)
+Byte 6..63  : Zero Padding (0x00 * 58)
+```
+*(Note: Omitting the 58-byte padding triggers a USB STALL / Broken Pipe on Linux).*
 
 ---
 
@@ -164,21 +178,27 @@ Edit `/etc/ocypus/config.json` to customize behavior:
   "temp_unit": "celsius",
   "display_mode": "temp",
   "cycle_interval": 5,
+  "cycle_metrics": ["temp", "util", "watt"],
   "refresh_interval": 1.0,
   "show_gpu": false,
-  "custom_temp_path": null
+  "custom_temp_path": null,
+  "custom_fan_path": null
 }
 ```
 
 - `temp_unit`: `"celsius"` or `"fahrenheit"`.
 - `display_mode`:
-  - `"temp"`: Static temperature display.
-  - `"util"`: Static utilization % display.
-  - `"cycle"`: Alternates automatically between temperature and utilization.
+  - `"temp"`: Static CPU/GPU temperature display.
+  - `"util"`: Static CPU/GPU utilization (%) display.
+  - `"watt"` / `"power"`: Static CPU/GPU power draw in Watts (W) via Intel RAPL or GPU sensor.
+  - `"ram"`: Static memory utilization (%) display.
+  - `"cycle"`: Alternates automatically through metrics in `cycle_metrics`.
 - `cycle_interval`: Number of seconds to display each metric in cycle mode (default: `5`).
+- `cycle_metrics`: Array of metrics to rotate through during cycle mode (e.g. `["temp", "util", "watt"]`).
 - `refresh_interval`: Send interval in seconds (default: `1.0`).
 - `show_gpu`: Set `true` to display GPU metrics instead of CPU.
 - `custom_temp_path`: Explicit `/sys/class/hwmon/hwmonX/tempY_input` path if multiple sockets or sensors exist.
+- `custom_fan_path`: Explicit `/sys/class/hwmon/hwmonX/fanY_input` path to override automatic fan header discovery.
 
 After modifying the configuration, reload the service:
 ```bash
