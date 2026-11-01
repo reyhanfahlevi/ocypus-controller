@@ -186,7 +186,9 @@ class OcypusDaemon:
                 show_gpu=self.config.show_gpu,
             )
 
-        self.active_device.write(packet)
+        bytes_written = self.active_device.write(packet)
+        if bytes_written is not None and bytes_written < 0:
+            raise OSError(f"Device write failed with code {bytes_written}")
         logger.debug(
             "Update sent: %s=%.1f%s (CPU=%.1f°C/%.1fW, GPU=%.1f°C/%.1fW, RAM=%.1f%%)",
             metric_name,

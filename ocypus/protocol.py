@@ -216,14 +216,19 @@ class OcypusPacketBuilder:
         show_gpu: bool = False,
         use_fahrenheit: bool = False,
         is_temp: bool = True,
+        byte1: int = 0xFF,
+        byte2: int = 0xFF,
     ) -> bytes:
         """
         Builds the report for Ocypus YCC Custom device (0x1A2C:0x434D).
-        Packet format: [0x07, 0xFF, 0xFF, hundreds, tens, ones]
+        Report Descriptor defines Report ID 0x07 with Report Count 63 (64 bytes total).
+        Packet format: [0x07, byte1, byte2, hundreds, tens, ones, ... 58 zero bytes ...]
         """
         if is_temp and use_fahrenheit:
             val = (9.0 / 5.0) * val + 32.0
         digits = split_bcd_digits(int(round(val)))
-        data = bytearray([0x07, 0xFF, 0xFF])
+        data = bytearray([0x07, byte1 & 0xFF, byte2 & 0xFF])
         data.extend(digits)
+        if len(data) < 64:
+            data.extend([0x00] * (64 - len(data)))
         return bytes(data)
